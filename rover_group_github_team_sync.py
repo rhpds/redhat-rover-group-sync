@@ -164,7 +164,7 @@ class RoverGroupGithubTeamSync:
                 # Login already has admin access, drop from list to handle
                 github_logins.remove(github_login)
             else:
-                print(f"Removing {user_name} from org {github_org.login}")
+                print(f"Removing {github_login} from org {github_org.login}")
                 try:
                     github_user = self.get_github_user(github_login)
                     github_org.remove_from_members(github_user)
@@ -173,7 +173,7 @@ class RoverGroupGithubTeamSync:
 
         for github_login in github_logins:
             try:
-                print(f"Adding {user_name} as admin of {github_org.login}")
+                print(f"Adding {github_login} as admin of {github_org.login}")
                 github_user = self.github_session.get_user(github_login)
                 github_org.add_to_members(github_user, "admin")
             except:
@@ -189,7 +189,7 @@ class RoverGroupGithubTeamSync:
                 # Login is already a member, drop from list to handle
                 github_logins.remove(github_login)
             else:
-                print(f"Removing {user_name} from team {github_team.name} in org {github_org.login}")
+                print(f"Removing {github_login} from team {github_team.name} in org {github_org.login}")
                 try:
                     github_user = self.get_github_user(github_login)
                     github_team.remove_membership(github_user)
