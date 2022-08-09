@@ -1,9 +1,3 @@
-rover_ldap:
-  url: ldaps://ext-ldap.corp.redhat.com
-  #bind_dn: ...
-  #bind_password: ...
-  group_base_dn: 'ou=adhoc,ou=managedGroups,dc=redhat,dc=com'
-  user_base_dn: 'ou=users,dc=redhat,dc=com'
 github:
   #token: ...
   organizations:
@@ -12,3 +6,18 @@ github:
       teams:
         - name: rhpds-admins  
           group: rhpds-admins
+
+quay:
+  organizations:
+    - name: rhpds
+      #token: ...
+      teams:
+        - name: owners
+          group: rhpds-admins
+
+rover_ldap:
+  url: ldaps://ext-ldap.corp.redhat.com
+  #bind_dn: ...
+  #bind_password: ...
+  group_base_dn: 'ou=adhoc,ou=managedGroups,dc=redhat,dc=com'
+  user_base_dn: 'ou=users,dc=redhat,dc=com'
