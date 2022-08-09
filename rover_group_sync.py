@@ -7,22 +7,23 @@ import logging
 import os
 import pathlib
 import re
+import requests
 import ssl
 import yaml
-
 
 logging.basicConfig(
     format='%(asctime)s %(message)s',
     datefmt='%FT%T%Z',
 )
 
-github_login_re = re.compile(r'Github->https://github.com/(.*)')
+github_login_re = re.compile(r'^Github->https://github.com/([^/?]+)$')
+quay_user_re = re.compile(r'^Quay->https://quay.io/user/([^/?]+)$')
 user_name_re = re.compile(r'uid=([^,]+),.*')
 
-class RoverGroupGithubTeamSync:
+class RoverGroupSync:
     def __init__(self, config):
         self.config = config
-        self.github_login_cache = {}
+        self.ldap_user_cache = {}
         self.github_user_cache = {}
 
     @property
@@ -37,6 +38,19 @@ class RoverGroupGithubTeamSync:
     def ldap_user_base_dn(self):
         return self.config.get('rover_ldap', {}).get('user_base_dn', 'ou=users,dc=redhat,dc=com')
 
+    def get_github_login(self, user_name):
+        ldap_user = self.get_ldap_user(user_name)
+        if not ldap_user:
+            return None
+
+        for social_url in ldap_user.rhatSocialUrl:
+            re_match = github_login_re.match(social_url)
+            if re_match:
+                return re_match.group(1)
+
+        logging.warning(f"Unable to find GitHub social url for {user_name} in Rover LDAP")
+        return None
+
     def get_github_logins_for_rover_group(self, rover_group_name):
         '''
         Lookup group members in Rover LDAP and return the GitHub login for each
@@ -44,42 +58,39 @@ class RoverGroupGithubTeamSync:
         '''
         github_logins = []
 
-        group_reader = ldap3.Reader(
-            self.ldap_connection, self.ldap_group_object_def, self.ldap_group_base_dn,
-            f"cn:={rover_group_name}"
-        )
-        group_reader.search()
-
-        for group in group_reader:
-            for user_dn in group['uniqueMember']:
-                user_name = user_name_re.sub(r'\1', user_dn)
-                github_login = self.get_github_login(user_name)
-                if github_login:
-                    github_logins.append(github_login)
+        for user_name in self.get_ldap_group_members(rover_group_name):
+            github_login = self.get_github_login(user_name)
+            if github_login:
+                github_logins.append(github_login)
 
         return github_logins
 
-    def get_github_login(self, user_name):
-        github_login = self.github_login_cache.get(user_name)
-        if github_login:
-            return github_login
-        user_reader = ldap3.Reader(
-            self.ldap_connection, self.ldap_user_object_def, self.ldap_user_base_dn,
-            "uid:=" + user_name
-        )
-        for user in user_reader.search():
-            for social_url in user.rhatSocialUrl:
-                re_match = github_login_re.match(social_url)
-                if re_match:
-                    github_login = re_match.group(1)
-                    self.github_login_cache[user_name] = github_login
-                    return github_login
-            else:
-                logging.warning(f"Unable to find GitHub social url for {user_name} in Rover LDAP")
-                return None
-        else:
-            logging.warning(f"Unable to find user {user_name} in Rover LDAP")
+    def get_quay_user(self, user_name):
+        ldap_user = self.get_ldap_user(user_name)
+        if not ldap_user:
             return None
+
+        for social_url in ldap_user.rhatSocialUrl:
+            re_match = quay_user_re.match(social_url)
+            if re_match:
+                return re_match.group(1)
+
+        logging.warning(f"Unable to find Quay social url for {user_name} in Rover LDAP")
+        return None
+
+    def get_quay_users_for_rover_group(self, rover_group_name):
+        '''
+        Lookup group members in Rover LDAP and return the Quay user for each
+        user from their social URL for Quay.
+        '''
+        quay_users = []
+
+        for user_name in self.get_ldap_group_members(rover_group_name):
+            quay_user = self.get_quay_user(user_name)
+            if quay_user:
+                quay_users.append(quay_user)
+
+        return quay_users
 
     def get_github_user(self, github_login):
         github_user = self.github_user_cache.get(github_login)
@@ -89,6 +100,38 @@ class RoverGroupGithubTeamSync:
         github_user = self.github_session.get_user(github_login)
         self.github_user_cache[github_login] = github_user
         return github_user
+
+    def get_ldap_group_members(self, rover_group_name):
+        group_reader = ldap3.Reader(
+            self.ldap_connection, self.ldap_group_object_def, self.ldap_group_base_dn,
+            f"cn:={rover_group_name}"
+        )
+        group_reader.search()
+
+        for group in group_reader:
+            member_names = []
+            for user_dn in group['uniqueMember']:
+                user_name = user_name_re.sub(r'\1', user_dn)
+                member_names.append(user_name)
+            return member_names
+
+        logger.warning(f"Unable to find group {rover_group_name} in LDAP")
+        return []
+
+    def get_ldap_user(self, user_name):
+        ldap_user = self.ldap_user_cache.get(user_name)
+        if ldap_user:
+            return ldap_user
+        user_reader = ldap3.Reader(
+            self.ldap_connection, self.ldap_user_object_def, self.ldap_user_base_dn,
+            "uid:=" + user_name
+        )
+        for ldap_user in user_reader.search():
+            self.ldap_user_cache[user_name] = ldap_user
+            return ldap_user
+        else:
+            logging.warning(f"Unable to find user {user_name} in Rover LDAP")
+            return None
 
     def github_init(self):
         self.github_session = github.Github(self.github_token)
@@ -117,11 +160,20 @@ class RoverGroupGithubTeamSync:
         self.ldap_user_object_def = ldap3.ObjectDef('inetOrgPerson', self.ldap_connection)
         self.ldap_user_object_def += 'rhatSocialUrl'
 
-    def sync_github(self):
-        self.github_init()
+    def sync_group_access(self):
         self.ldap_init()
-        for github_org_config in self.config.get('github', {}).get('organizations', []):
-            self.sync_github_org(github_org_config)
+
+        #github_config = self.config.get('github')
+        #if github_config:
+        #    self.github_init()
+        #    for github_org_config in github_config.get('organizations', []):
+        #        self.sync_github_org(github_org_config)
+
+        quay_config = self.config.get('quay')
+        if quay_config:
+            for quay_org_config in quay_config.get('organizations', []):
+                self.sync_quay_org(quay_org_config)
+
 
     def sync_github_org(self, github_org_config):
         github_org = self.github_session.get_organization(github_org_config['name'])
@@ -147,7 +199,7 @@ class RoverGroupGithubTeamSync:
                 self.sync_github_team(
                     github_org = github_org,
                     github_team = github_team,
-                    rover_group_name = github_team_config.get('group', github_team_config['name']),
+                    rover_group_name = github_team_config['name'],
                 )
 
     def sync_github_org_admins(self, github_org, rover_group_name):
@@ -204,6 +256,53 @@ class RoverGroupGithubTeamSync:
             except:
                 logging.exception(f"Unable to add user {github_login} to team {github_team.name} in org {github_org.login}")
 
+    def sync_quay_org(self, quay_org_config):
+        quay_org_name = quay_org_config['name']
+        quay_org_token = quay_org_config['token']
+        for quay_team_config in quay_org_config.get('teams', []):
+            self.sync_quay_team(
+                quay_org_name = quay_org_name,
+                quay_team_name = quay_team_config['name'],
+                quay_token = quay_org_token,
+                rover_group_name = quay_team_config['group'],
+            )
+
+    def sync_quay_team(self, quay_org_name, quay_team_name, quay_token, rover_group_name):
+        quay_users = self.get_quay_users_for_rover_group(rover_group_name)
+        print(quay_users)
+
+        resp = requests.get(
+            f"https://quay.io/api/v1/organization/{quay_org_name}/team/{quay_team_name}/members",
+            headers = {"Authorization": f"Bearer {quay_token}"},
+        )
+
+        for quay_team_member in resp.json()['members']:
+            quay_user_name = quay_team_member['name']
+            if quay_user_name in quay_users:
+                # User is already a member of team, drop from list to handle
+                quay_users.remove(quay_user_name)
+            else:
+                print(f"Removing {quay_user_name} from Quay team {quay_team_name} in org {quay_org_name}")
+                try:
+                    resp = requests.delete(
+                        f"https://quay.io/api/v1/organization/{quay_org_name}/team/{quay_team_name}/members/{quay_user_name}",
+                        headers = {"Authorization": f"Bearer {quay_token}"},
+                    )
+                    resp.raise_for_status()
+                except:
+                    logging.exception(f"Unable to remove user {quay_user_name} from Quay team {quay_team_name} in org {quay_org_name}")
+
+        for quay_user_name in quay_users:
+            print(f"Adding {quay_user_name} to team {quay_team_name} in {quay_org_name}")
+            try:
+                resp = requests.put(
+                    f"https://quay.io/api/v1/organization/{quay_org_name}/team/{quay_team_name}/members/{quay_user_name}",
+                    headers = {"Authorization": f"Bearer {quay_token}"},
+                )
+                resp.raise_for_status()
+            except:
+                logging.exception(f"Unable to add user {quay_user_name} to team {quay_team_name} in {quay_org_name}")
+
 
 def main():
     argparser = argparse.ArgumentParser(description='Synrchronize GitHub teams to Rover groups')
@@ -211,8 +310,8 @@ def main():
     args = argparser.parse_args()
     with args.config.open() as f:
         config = yaml.safe_load(f)
-        rover_group_github_team_sync = RoverGroupGithubTeamSync(config=config)
-        rover_group_github_team_sync.sync_github()
+        rover_group_sync = RoverGroupSync(config=config)
+        rover_group_sync.sync_group_access()
 
 
 if __name__ == '__main__':
