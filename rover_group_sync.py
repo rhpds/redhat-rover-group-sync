@@ -115,7 +115,7 @@ class RoverGroupSync:
                 member_names.append(user_name)
             return member_names
 
-        logger.warning(f"Unable to find group {rover_group_name} in LDAP")
+        logging.warning(f"Unable to find group {rover_group_name} in LDAP")
         return []
 
     def get_ldap_user(self, user_name):
@@ -163,11 +163,11 @@ class RoverGroupSync:
     def sync_group_access(self):
         self.ldap_init()
 
-        #github_config = self.config.get('github')
-        #if github_config:
-        #    self.github_init()
-        #    for github_org_config in github_config.get('organizations', []):
-        #        self.sync_github_org(github_org_config)
+        github_config = self.config.get('github')
+        if github_config:
+            self.github_init()
+            for github_org_config in github_config.get('organizations', []):
+                self.sync_github_org(github_org_config)
 
         quay_config = self.config.get('quay')
         if quay_config:
@@ -192,7 +192,7 @@ class RoverGroupSync:
 
             for github_team_config in github_org_config.get('teams'):
                 github_team_name = github_team_config['name']
-                github_team = github_teams_by_name[github_team_name]
+                github_team = github_teams_by_name.get(github_team_name)
                 if not github_team:
                     github_team = github_org.create_team(github_team_name)
 
@@ -254,7 +254,7 @@ class RoverGroupSync:
                 github_user = self.get_github_user(github_login)
                 github_team.add_membership(github_user)
             except:
-                logging.exception(f"Unable to add user {github_login} to team {github_team.name} in org {github_org.login}")
+                logging.exception(f"Unable to add user {github_login} to GitHub team {github_team.name} in org {github_org.login}")
 
     def sync_quay_org(self, quay_org_config):
         quay_org_name = quay_org_config['name']
@@ -293,7 +293,7 @@ class RoverGroupSync:
                     logging.exception(f"Unable to remove user {quay_user_name} from Quay team {quay_team_name} in org {quay_org_name}")
 
         for quay_user_name in quay_users:
-            print(f"Adding {quay_user_name} to team {quay_team_name} in {quay_org_name}")
+            print(f"Adding {quay_user_name} to Quay team {quay_team_name} in {quay_org_name}")
             try:
                 resp = requests.put(
                     f"https://quay.io/api/v1/organization/{quay_org_name}/team/{quay_team_name}/members/{quay_user_name}",
@@ -301,7 +301,7 @@ class RoverGroupSync:
                 )
                 resp.raise_for_status()
             except:
-                logging.exception(f"Unable to add user {quay_user_name} to team {quay_team_name} in {quay_org_name}")
+                logging.exception(f"Unable to add user {quay_user_name} to Quay team {quay_team_name} in {quay_org_name}")
 
 
 def main():
