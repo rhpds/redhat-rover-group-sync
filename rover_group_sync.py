@@ -258,7 +258,7 @@ class RoverGroupSync:
 
     def sync_quay_org(self, quay_org_config):
         quay_org_name = quay_org_config['name']
-        quay_org_token = quay_org_config['token']
+        quay_org_token = quay_org_config.get('token', os.environ.get(quay_org_name.upper() + "_QUAY_TOKEN", os.environ.get("QUAY_TOKEN")))
         for quay_team_config in quay_org_config.get('teams', []):
             self.sync_quay_team(
                 quay_org_name = quay_org_name,
