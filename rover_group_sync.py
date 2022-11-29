@@ -178,11 +178,13 @@ class RoverGroupSync:
     def sync_github_org(self, github_org_config):
         github_org = self.github_session.get_organization(github_org_config['name'])
         admin_group = github_org_config.get('admin_group')
+        admin_additional_users = github_org_config.get('admin_additional_users')
 
         if admin_group:
             self.sync_github_org_admins(
                 github_org = github_org,
                 rover_group_name = admin_group,
+                additional_users = admin_additional_users,
             )
 
         if 'teams' in github_org_config:
@@ -202,8 +204,11 @@ class RoverGroupSync:
                     rover_group_name = github_team_config['name'],
                 )
 
-    def sync_github_org_admins(self, github_org, rover_group_name):
+    def sync_github_org_admins(self, github_org, rover_group_name, additional_users):
         github_logins = self.get_github_logins_for_rover_group(rover_group_name)
+
+        if additional_users:
+            github_logins.extend(additional_users)
 
         # Remove access for users not in group
         for github_org_member in github_org.get_members(role="admin"):
