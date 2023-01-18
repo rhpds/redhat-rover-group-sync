@@ -258,7 +258,15 @@ class RoverGroupSync:
 
     def sync_quay_org(self, quay_org_config):
         quay_org_name = quay_org_config['name']
-        quay_org_token = quay_org_config.get('token', os.environ.get(quay_org_name.upper() + "_QUAY_TOKEN", os.environ.get("QUAY_TOKEN")))
+        quay_org_token = quay_org_config.get('token')
+        if not quay_org_token:
+            quay_org_envvar = re.sub(r'[^A-Z]', '_', quay_org_name.upper()) + '_QUAY_TOKEN'
+            if quay_org_envvar in os.environ:
+                quay_org_token = os.environ[quay_org_envvar]
+            elif 'QUAY_TOKEN' in os.environ:
+                quay_org_token = os.environ['QUAY_TOKEN']
+            else:
+                raise Exception(f"Please set {quay_org_envvar} or QUAY_TOKEN environment variable")
         for quay_team_config in quay_org_config.get('teams', []):
             self.sync_quay_team(
                 quay_org_name = quay_org_name,
@@ -276,7 +284,7 @@ class RoverGroupSync:
             headers = {"Authorization": f"Bearer {quay_token}"},
         )
 
-        for quay_team_member in resp.json()['members']:
+        for quay_team_member in resp.json().get('members', []):
             quay_user_name = quay_team_member['name']
             if quay_user_name in quay_users:
                 # User is already a member of team, drop from list to handle
